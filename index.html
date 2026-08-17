@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TechLab</title>
+<script src="https://unpkg.com/@strudel/web@latest"></script>
+<!-- Moteur audio : Strudel (AGPL-3.0), projet TidalCycles — https://codeberg.org/uzu/strudel -->
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --panel: #141414;
+    --cell: #1f1f1f;
+    --cell-beat: #262626;
+    --on: #ff5c00;
+    --on-dim: #b34104;
+    --text: #d8d8d8;
+    --muted: #6a6a6a;
+    --border: #2c2c2c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: "SF Mono", "Menlo", monospace;
+    padding: 18px; min-height: 100vh;
+  }
+  h1 { font-size: 18px; letter-spacing: 6px; font-weight: 700; }
+  h1 span { color: var(--on); }
+  .sub { color: var(--muted); font-size: 10px; letter-spacing: 2px; margin-top: 2px; }
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;}
+  .transport { display: flex; gap: 10px; align-items: center; }
+  button {
+    background: var(--cell); color: var(--text); border: 1px solid var(--border);
+    font-family: inherit; font-size: 11px; letter-spacing: 1px;
+    padding: 8px 14px; cursor: pointer; border-radius: 3px;
+  }
+  button:hover { border-color: var(--on); }
+  #playBtn { background: var(--on); color: #000; font-weight: 700; padding: 10px 26px; border: none; }
+  #playBtn.playing { background: #d8d8d8; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 5px;
+    padding: 14px; margin-bottom: 12px;
+  }
+  .panel h2 { font-size: 10px; letter-spacing: 3px; color: var(--muted); margin-bottom: 10px; text-transform: uppercase; }
+  .row { display: grid; grid-template-columns: 60px repeat(16, 1fr); gap: 4px; margin-bottom: 4px; align-items: center; }
+  .rowlabel { font-size: 10px; color: var(--muted); letter-spacing: 1px; }
+  .cell {
+    aspect-ratio: 1.4; border-radius: 2px; background: var(--cell);
+    border: 1px solid transparent; cursor: pointer; padding: 0;
+  }
+  .cell.beat { background: var(--cell-beat); }
+  .cell.on { background: var(--on); }
+  .cell.playing-col { border-color: #555; }
+  .bcell {
+    aspect-ratio: 1.4; border-radius: 2px; background: var(--cell);
+    border: 1px solid transparent; cursor: pointer; padding: 0;
+    font-size: 9px; color: var(--muted); font-family: inherit;
+  }
+  .bcell.beat { background: var(--cell-beat); }
+  .bcell.on { background: var(--on); color: #000; font-weight: 700; }
+  .knobs { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 10px; }
+  .knob { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
+  .knob label { font-size: 9px; letter-spacing: 1px; color: var(--muted); }
+  .knob output { font-size: 10px; color: var(--on); }
+  input[type=range] { accent-color: var(--on); width: 100%; }
+  select {
+    background: var(--cell); color: var(--text); border: 1px solid var(--border);
+    font-family: inherit; font-size: 11px; padding: 6px; border-radius: 3px;
+  }
+  .toggles { display: flex; gap: 10px; flex-wrap: wrap; }
+  .tog { border: 1px solid var(--border); }
+  .tog.on { background: var(--on); color: #000; font-weight: 700; }
+  #code {
+    width: 100%; min-height: 130px; background: #0d0d0d; color: #8a8a8a;
+    border: 1px solid var(--border); border-radius: 3px; font-family: inherit;
+    font-size: 10px; padding: 10px; resize: vertical;
+  }
+  .actions { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+  #status { font-size: 10px; color: var(--muted); margin-left: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>TECH<span>LAB</span></h1>
+    <div class="sub">DETROIT / BERGHAIN — SÉQUENCEUR 909 + BASSLINE — MOTEUR STRUDEL</div>
+  </div>
+  <div class="transport">
+    <div class="knob" style="min-width:180px">
+      <label>BPM <output id="bpmOut">132</output></label>
+      <input type="range" id="bpm" min="118" max="150" value="132" step="1">
+    </div>
+    <button id="playBtn">&#9654; PLAY</button>
+    <span id="status">chargement du moteur…</span>
+  </div>
+</header>
+
+<div class="panel">
+  <h2>Boîte à rythmes — TR-909</h2>
+  <div id="drumgrid"></div>
+</div>
+
+<div class="panel">
+  <h2>Bassline — Fa mineur (clic = note suivante)</h2>
+  <div id="bassgrid"></div>
+  <div class="knobs">
+    <div class="knob"><label>CUTOFF <output id="cutoffOut">850</output> Hz</label>
+      <input type="range" id="cutoff" min="100" max="3000" value="850"></div>
+    <div class="knob"><label>DECAY <output id="decayOut">0.14</output> s</label>
+      <input type="range" id="decay" min="0.05" max="0.5" value="0.14" step="0.01"></div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Modulation</h2>
+  <div class="knobs">
+    <div class="knob"><label>LFO BASS — FORME</label>
+      <select id="lfoShape">
+        <option value="sine" selected>sine</option>
+        <option value="tri">triangle</option>
+        <option value="saw">saw</option>
+        <option value="isaw">saw inversé</option>
+        <option value="square">square</option>
+      </select></div>
+    <div class="knob"><label>LFO BASS — VITESSE <output id="lfoRateOut">8</output> cycles</label>
+      <input type="range" id="lfoRate" min="1" max="32" value="8" step="1"></div>
+    <div class="knob"><label>LFO BASS — PROFONDEUR <output id="lfoDepthOut">0.6</output></label>
+      <input type="range" id="lfoDepth" min="0" max="1" value="0.6" step="0.05"></div>
+    <div class="knob"><label>PAN HATS <output id="panOut">off</output></label>
+      <input type="range" id="panDepth" min="0" max="1" value="0" step="0.05"></div>
+    <div class="knob"><label>PUMP SIDECHAIN <output id="pumpOut">off</output></label>
+      <input type="range" id="pump" min="0" max="1" value="0" step="0.05"></div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Couches + Master</h2>
+  <div class="toggles">
+    <button class="tog on" id="togStab">STABS Fm/Db</button>
+    <button class="tog on" id="togPad">NAPPE DETROIT</button>
+    <button class="tog" id="togRide">RIDE</button>
+  </div>
+  <div class="knobs">
+    <div class="knob"><label>FILTRE MASTER (DJ) <output id="masterOut">off</output></label>
+      <input type="range" id="master" min="200" max="8000" value="8000"></div>
+    <div class="knob"><label>REVERB STABS <output id="roomOut">0.4</output></label>
+      <input type="range" id="room" min="0" max="1" value="0.4" step="0.05"></div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Code Strudel généré</h2>
+  <textarea id="code" readonly></textarea>
+  <div class="actions">
+    <button id="presetDetroit">PRESET DETROIT 132</button>
+    <button id="randomize">GROOVE ALÉATOIRE</button>
+    <button id="clear">VIDER</button>
+    <button id="download">EXPORTER .STRUDEL</button>
+  </div>
+</div>
+
+<div class="sub" style="margin-top:4px">TECHLAB — MOTEUR AUDIO <a href="https://strudel.cc" style="color:var(--on);text-decoration:none">STRUDEL</a> (TIDALCYCLES, AGPL-3.0)</div>
+
+<script>
+const DRUMS = [
+  { key: 'bd', label: 'KICK',  gain: 1.15 },
+  { key: 'hh', label: 'HAT',   gain: 0.55 },
+  { key: 'oh', label: 'OPEN',  gain: 0.45 },
+  { key: 'cp', label: 'CLAP',  gain: 0.6  },
+  { key: 'rim', label: 'RIM',  gain: 0.5  },
+];
+const BASSNOTES = ['~', 'f1', 'ab1', 'c2', 'db2', 'eb2', 'f2'];
+const STEPS = 16;
+
+const state = {
+  bpm: 132,
+  drums: Object.fromEntries(DRUMS.map(d => [d.key, Array(STEPS).fill(false)])),
+  bass: Array(STEPS).fill(0),        // index dans BASSNOTES
+  cutoff: 850, decay: 0.14,
+  lfoShape: 'sine', lfoRate: 8, lfoDepth: 0.6,
+  panDepth: 0, pump: 0,
+  stab: true, pad: true, ride: false,
+  master: 8000, room: 0.4,
+};
+
+let engineReady = false, playing = false, updateTimer = null;
+
+// ---------- UI construction ----------
+const drumgrid = document.getElementById('drumgrid');
+DRUMS.forEach(d => {
+  const row = document.createElement('div'); row.className = 'row';
+  const lab = document.createElement('div'); lab.className = 'rowlabel'; lab.textContent = d.label;
+  row.appendChild(lab);
+  for (let i = 0; i < STEPS; i++) {
+    const c = document.createElement('button');
+    c.className = 'cell' + (i % 4 === 0 ? ' beat' : '');
+    c.dataset.drum = d.key; c.dataset.step = i;
+    c.onclick = () => { state.drums[d.key][i] = !state.drums[d.key][i]; c.classList.toggle('on'); onChange(); };
+    row.appendChild(c);
+  }
+  drumgrid.appendChild(row);
+});
+
+const bassgrid = document.getElementById('bassgrid');
+const bassRow = document.createElement('div'); bassRow.className = 'row';
+const blab = document.createElement('div'); blab.className = 'rowlabel'; blab.textContent = 'BASS';
+bassRow.appendChild(blab);
+const bassCells = [];
+for (let i = 0; i < STEPS; i++) {
+  const c = document.createElement('button');
+  c.className = 'bcell' + (i % 4 === 0 ? ' beat' : '');
+  c.textContent = '·';
+  c.onclick = () => {
+    state.bass[i] = (state.bass[i] + 1) % BASSNOTES.length;
+    renderBassCell(i); onChange();
+  };
+  c.oncontextmenu = (e) => { e.preventDefault(); state.bass[i] = 0; renderBassCell(i); onChange(); };
+  bassCells.push(c); bassRow.appendChild(c);
+}
+bassgrid.appendChild(bassRow);
+function renderBassCell(i) {
+  const n = BASSNOTES[state.bass[i]];
+  bassCells[i].textContent = n === '~' ? '·' : n.toUpperCase();
+  bassCells[i].classList.toggle('on', n !== '~');
+}
+
+// ---------- Génération du code Strudel ----------
+function seq(arr) { return arr.join(' '); }
+
+function genCode() {
+  const parts = [];
+  DRUMS.forEach(d => {
+    const steps = state.drums[d.key].map(on => on ? d.key : '~');
+    if (!state.drums[d.key].some(Boolean)) return;
+    let line = `  s("${seq(steps)}").bank("RolandTR909").gain(${d.gain})`;
+    if (d.key === 'hh' && state.panDepth > 0.02) {
+      const lo = (0.5 - state.panDepth / 2).toFixed(2), hi = (0.5 + state.panDepth / 2).toFixed(2);
+      line += `.pan(sine.slow(4).range(${lo}, ${hi}))`;
+    }
+    parts.push(line);
+  });
+  if (state.ride) parts.push(`  s("[~ rd]*4").bank("RolandTR909").gain(.35)`);
+
+  if (state.bass.some(i => i !== 0)) {
+    const notes = state.bass.map(i => BASSNOTES[i]);
+    const lo = Math.max(80, Math.round(state.cutoff * (1 - state.lfoDepth * 0.85)));
+    const lpf = state.lfoDepth > 0.02
+      ? `${state.lfoShape}.slow(${state.lfoRate}).range(${lo}, ${state.cutoff})`
+      : `${state.cutoff}`;
+    parts.push(
+`  note("${seq(notes)}")
+    .s("sawtooth")
+    .lpf(${lpf})
+    .decay(${state.decay}).sustain(0)
+    .gain(.85)`);
+  }
+  const pumpGain = (base) => state.pump > 0.02
+    ? `saw.fast(4).range(${(base * (1 - state.pump * 0.9)).toFixed(2)}, ${base})`
+    : `${base}`;
+  if (state.stab) parts.push(
+`  note("<[f3,ab3,c4] [db3,f3,ab3]>")
+    .struct("~ ~ x ~ ~ ~ x ~")
+    .s("sawtooth").lpf(1400).release(.1)
+    .room(${state.room}).gain(${pumpGain(0.4)})`);
+  if (state.pad) parts.push(
+`  note("<f2 eb2 db2 c2>").slow(2)
+    .s("sawtooth").attack(.8).release(1.5)
+    .lpf(500).gain(${pumpGain(0.3)})`);
+
+  let code = `setcps(${(state.bpm / 240).toFixed(5)})\n\nstack(\n${parts.join(',\n')}\n)`;
+  if (state.master < 7900) code += `.lpf(${state.master})`;
+  return code;
+}
+
+function refreshCode() { document.getElementById('code').value = genCode(); }
+
+function onChange() {
+  refreshCode();
+  localStorage.setItem('technolab', JSON.stringify(state));
+  if (playing) {
+    clearTimeout(updateTimer);
+    updateTimer = setTimeout(() => evaluate(genCode()), 180);
+  }
+}
+
+// ---------- Transport ----------
+const playBtn = document.getElementById('playBtn');
+playBtn.onclick = async () => {
+  if (!engineReady) return;
+  if (!playing) {
+    playing = true;
+    playBtn.textContent = '■ STOP';
+    playBtn.classList.add('playing');
+    evaluate(genCode());
+  } else {
+    playing = false;
+    playBtn.innerHTML = '&#9654; PLAY';
+    playBtn.classList.remove('playing');
+    hush();
+  }
+};
+
+// ---------- Contrôles ----------
+function bindRange(id, outId, key, fmt) {
+  const el = document.getElementById(id), out = document.getElementById(outId);
+  el.oninput = () => {
+    state[key] = parseFloat(el.value);
+    out.textContent = fmt ? fmt(state[key]) : state[key];
+    onChange();
+  };
+}
+bindRange('bpm', 'bpmOut', 'bpm');
+bindRange('cutoff', 'cutoffOut', 'cutoff');
+bindRange('decay', 'decayOut', 'decay');
+bindRange('master', 'masterOut', 'master', v => v >= 7900 ? 'off' : v + ' Hz');
+bindRange('room', 'roomOut', 'room');
+bindRange('lfoRate', 'lfoRateOut', 'lfoRate');
+bindRange('lfoDepth', 'lfoDepthOut', 'lfoDepth');
+bindRange('panDepth', 'panOut', 'panDepth', v => v < 0.03 ? 'off' : v);
+bindRange('pump', 'pumpOut', 'pump', v => v < 0.03 ? 'off' : v);
+document.getElementById('lfoShape').onchange = e => { state.lfoShape = e.target.value; onChange(); };
+
+function bindTog(id, key) {
+  const el = document.getElementById(id);
+  el.onclick = () => { state[key] = !state[key]; el.classList.toggle('on', state[key]); onChange(); };
+}
+bindTog('togStab', 'stab'); bindTog('togPad', 'pad'); bindTog('togRide', 'ride');
+
+// ---------- Presets ----------
+function setDrums(key, pattern) {
+  state.drums[key] = pattern.split('').map(c => c === 'x');
+}
+function presetDetroit() {
+  setDrums('bd',  'x...x...x...x...');
+  setDrums('hh',  '..x...x...x...x.');
+  setDrums('oh',  '..............x.');
+  setDrums('cp',  '....x.......x...');
+  setDrums('rim', '................');
+  state.bass = [1,0,1,0, 0,1,0,0, 2,0,0,0, 1,0,3,0];
+  state.stab = true; state.pad = true;
+  syncUI(); onChange();
+}
+function randomize() {
+  setDrums('bd', 'x...x...x...x...');
+  DRUMS.slice(1).forEach(d => {
+    state.drums[d.key] = Array.from({length: STEPS}, (_, i) => {
+      if (d.key === 'hh') return i % 4 === 2 || Math.random() < 0.15;
+      if (d.key === 'cp') return (i === 4 || i === 12) && Math.random() < 0.9;
+      return Math.random() < 0.08;
+    });
+  });
+  state.bass = Array.from({length: STEPS}, (_, i) =>
+    (i % 2 === 0 && Math.random() < 0.7) ? 1 + Math.floor(Math.random() * 3) * Math.floor(Math.random() * 2) : (Math.random() < 0.15 ? 1 + Math.floor(Math.random() * (BASSNOTES.length - 1)) : 0)
+  );
+  syncUI(); onChange();
+}
+function clearAll() {
+  DRUMS.forEach(d => state.drums[d.key] = Array(STEPS).fill(false));
+  state.bass = Array(STEPS).fill(0);
+  syncUI(); onChange();
+}
+function syncUI() {
+  document.querySelectorAll('.cell').forEach(c =>
+    c.classList.toggle('on', state.drums[c.dataset.drum][+c.dataset.step]));
+  for (let i = 0; i < STEPS; i++) renderBassCell(i);
+  document.getElementById('togStab').classList.toggle('on', state.stab);
+  document.getElementById('togPad').classList.toggle('on', state.pad);
+  document.getElementById('togRide').classList.toggle('on', state.ride);
+  document.getElementById('bpm').value = state.bpm;
+  document.getElementById('bpmOut').textContent = state.bpm;
+  document.getElementById('lfoShape').value = state.lfoShape;
+  document.getElementById('lfoRate').value = state.lfoRate;
+  document.getElementById('lfoDepth').value = state.lfoDepth;
+  document.getElementById('panDepth').value = state.panDepth;
+  document.getElementById('pump').value = state.pump;
+}
+document.getElementById('presetDetroit').onclick = presetDetroit;
+document.getElementById('randomize').onclick = randomize;
+document.getElementById('clear').onclick = clearAll;
+document.getElementById('download').onclick = () => {
+  const blob = new Blob([genCode()], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'technolab_' + state.bpm + 'bpm.strudel';
+  a.click();
+};
+
+// ---------- Init moteur ----------
+async function loadBanks() {
+  const banks = ['Dirt-Samples.json', 'tidal-drum-machines.json'];
+  const mirrors = [
+    'https://cdn.jsdelivr.net/gh/felixroos/dough-samples@main/',
+    'https://raw.githubusercontent.com/felixroos/dough-samples/main/',
+  ];
+  for (const b of banks) {
+    let ok = false, lastErr;
+    for (const m of mirrors) {
+      try { await samples(m + b); ok = true; break; } catch (e) { lastErr = e; }
+    }
+    if (!ok) throw lastErr;
+  }
+}
+initStrudel({ prebake: loadBanks }).then(() => {
+  engineReady = true;
+  document.getElementById('status').textContent = 'moteur prêt';
+}).catch(e => {
+  document.getElementById('status').textContent = 'erreur moteur : ' + e.message;
+});
+
+// ---------- Restauration ----------
+const saved = localStorage.getItem('technolab');
+if (saved) {
+  try { Object.assign(state, JSON.parse(saved)); } catch (e) {}
+  syncUI(); refreshCode();
+} else {
+  presetDetroit();
+}
+</script>
+</body>
+</html>
