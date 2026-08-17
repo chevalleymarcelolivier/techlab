@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TechLab Console</title>
+<script src="https://unpkg.com/@strudel/web@latest"></script>
+<!-- Moteur audio : Strudel (AGPL-3.0), projet TidalCycles — https://codeberg.org/uzu/strudel -->
+<style>
+  :root {
+    --bg: #0a0a0a; --panel: #141414; --cell: #1f1f1f; --on: #ff5c00;
+    --text: #d8d8d8; --muted: #6a6a6a; --border: #2c2c2c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: "SF Mono", "Menlo", monospace; padding: 18px; }
+  h1 { font-size: 18px; letter-spacing: 6px; }
+  h1 span { color: var(--on); }
+  .sub { color: var(--muted); font-size: 10px; letter-spacing: 2px; margin-top: 2px; }
+  header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+  button { background: var(--cell); color: var(--text); border: 1px solid var(--border); font-family: inherit; font-size: 11px; padding: 8px 14px; cursor: pointer; border-radius: 3px; }
+  button:hover { border-color: var(--on); }
+  #playBtn { background: var(--on); color: #000; font-weight: 700; padding: 10px 26px; border: none; }
+  #playBtn.playing { background: #d8d8d8; }
+  a.nav { color: var(--muted); font-size: 10px; letter-spacing: 2px; text-decoration: none; }
+  a.nav:hover { color: var(--on); }
+  .console { display: flex; gap: 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 5px; padding: 16px; overflow-x: auto; }
+  .strip { display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 72px; background: var(--cell); border: 1px solid var(--border); border-radius: 4px; padding: 10px 6px; }
+  .strip .nom { font-size: 9px; letter-spacing: 1px; color: var(--text); text-align: center; }
+  .strip output { font-size: 10px; color: var(--on); }
+  .fader { writing-mode: vertical-lr; direction: rtl; height: 180px; width: 24px; accent-color: var(--on); }
+  .mute { width: 100%; padding: 5px 0; font-size: 9px; }
+  .mute.actif { background: #8a1a1a; color: #fff; border-color: #8a1a1a; }
+  .masterzone { display: flex; gap: 24px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 5px; padding: 14px; margin-top: 12px; }
+  .knob { display: flex; flex-direction: column; gap: 4px; min-width: 200px; }
+  .knob label { font-size: 9px; letter-spacing: 1px; color: var(--muted); }
+  .knob output { font-size: 10px; color: var(--on); }
+  input[type=range]:not(.fader) { accent-color: var(--on); width: 100%; }
+  #status { font-size: 10px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>TECH<span>LAB</span> CONSOLE</h1>
+    <div class="sub">TABLE DE MIXAGE SERVANTRO — Eb 129 · KICK ACCORDÉ SIB1 · MOTEUR STRUDEL</div>
+  </div>
+  <div style="display:flex;gap:14px;align-items:center">
+    <a class="nav" href="index.html">← SÉQUENCEUR</a>
+    <button id="playBtn">&#9654; PLAY</button>
+    <span id="status">chargement du moteur…</span>
+  </div>
+</header>
+
+<div class="console" id="console"></div>
+
+<div class="masterzone">
+  <div class="knob"><label>BPM <output id="bpmOut">129</output></label>
+    <input type="range" id="bpm" min="118" max="150" value="129" step="1"></div>
+  <div class="knob"><label>FILTRE MASTER (DJ) <output id="masterOut">off</output></label>
+    <input type="range" id="master" min="200" max="8000" value="8000"></div>
+</div>
+
+<div class="sub" style="margin-top:10px">CHAQUE FADER RÉÉCRIT LE CODE STRUDEL EN DIRECT · MOTEUR <a class="nav" href="https://strudel.cc">STRUDEL</a> (TIDALCYCLES, AGPL-3.0)</div>
+
+<script>
+// Tranches : nom, gain par defaut, gain max
+const STRIPS = [
+  { id: 'kick',   nom: 'KICK',      def: 1.1,  max: 1.6 },
+  { id: 'sub',    nom: 'SUB Eb',    def: .85,  max: 1.4 },
+  { id: 'rumble', nom: 'RUMBLE',    def: .55,  max: 1.2 },
+  { id: 'basse',  nom: 'BASSE 789', def: .85,  max: 1.4 },
+  { id: 'hats',   nom: 'HATS',      def: 1.0,  max: 1.6 },
+  { id: 'ohat',   nom: 'OPEN HAT',  def: .45,  max: 1.2 },
+  { id: 'stab',   nom: 'STAB',      def: .3,   max: 1.0 },
+  { id: 'nappe',  nom: 'NAPPE',     def: .35,  max: 1.0 },
+  { id: 'acide',  nom: 'ACIDE',     def: .48,  max: 1.2 },
+  { id: 'riser',  nom: 'RISERS',    def: 1.0,  max: 1.6 },
+];
+const state = { bpm: 129, master: 8000, g: {}, mute: {} };
+STRIPS.forEach(s => { state.g[s.id] = s.def; state.mute[s.id] = false; });
+
+let engineReady = false, playing = false, timer = null;
+const n2 = x => (Math.round(x * 100) / 100);
+const v = id => state.mute[id] ? 0 : state.g[id];
+
+function genCode() {
+  const g = Object.fromEntries(STRIPS.map(s => [s.id, v(s.id)]));
+  const h = k => n2(k * g.hats);
+  let code = `setcps(${(state.bpm / 240).toFixed(5)})
+const kickCorps = s("bd*4").bank("RolandTR909").speed(.704).shape(.55).lpf(2500).gain(${n2(g.kick)})
+const kickSub = note("eb1*4").s("sine").decay(.25).sustain(0).lpf(80).gain(${n2(.8 * g.sub / .85)})
+const rumble = s("bd*4").bank("RolandTR909").speed(.704).lpf(140).room(1.4).orbit(2).gain(${n2(g.rumble)})
+const kick = stack(kickCorps, kickSub, rumble)
+const kickOmbre = s("bd*4").bank("RolandTR909").speed(.704).lpf(160).room(.8).orbit(2).gain(${n2(.5 * g.kick / 1.1)})
+const sub = note("eb1*4").s("sine").decay(.2).sustain(0).lpf(90).gain(${n2(g.sub)})
+const hatTick = s("white").struct("[~ x]*4").decay(.05).sustain(0).hpf(6500).gain("[${h(.5)} ${h(.34)} ${h(.55)} ${h(.38)}]").pan(sine.slow(6).range(.38, .62))
+const hatFourmille = s("white*16").decay(.014).sustain(0).hpf(9000).gain("[${h(.14)} ${h(.07)} ${h(.1)} ${h(.08)}]*4")
+const hats = stack(hatTick, hatFourmille)
+const hiss = s("white*8").decay(.03).hpf(4000).lpf(9000).gain(${n2(.09 * g.hats)})
+const ohat = s("~ ~ ~ [~ oh]").bank("RolandTR909").speed(.968).hpf(1000).gain(${n2(g.ohat)}).room(.2)
+const ohatPic = s("[~ oh]*2").bank("RolandTR909").speed(.968).hpf(1000).gain(${n2(g.ohat * 1.07)}).room(.2)
+const rim = s("~ rim ~ ~ ~ rim ~ rim").bank("RolandTR909").lpf(3000).room(.3).gain(${n2(.32 * g.ohat / .45)}).pan(.6)
+const roll = note("~ ~ ~ ~ ~ ~ eb1 eb1 d1 ~ ~ ~ ~ ~ eb1 ~").s("sawtooth").lpf(sine.slow(16).range(160, 700)).decay(.16).sustain(0).shape(.15).gain(${n2(g.basse)})
+const rollPic = note("~ ~ eb1 ~ ~ ~ eb1 eb1 d1 ~ eb1 ~ ~ ~ eb1 eb1").s("sawtooth").lpf(sine.slow(8).range(300, 1400)).decay(.15).sustain(0).shape(.3).gain(${n2(g.basse * 1.06)})
+const drone = note("eb1").slow(2).s("sawtooth").attack(1.5).release(3).lpf(sine.slow(16).range(60, 200)).gain(${n2(.4 * g.sub / .85)})
+const stab = note("[eb3,gb3,bb3]").struct("~ ~ ~ ~ ~ ~ x ~").s("sawtooth").lpf(900).release(.08).room(.35).gain(${n2(g.stab)})
+const nappe = note("<[eb2,bb2] [db2,ab2]>").slow(2).s("sawtooth").attack(1).release(2).lpf(saw.slow(16).range(200, 1200)).room(.3).gain(${n2(g.nappe)})
+const acide = note("eb2 ~ ~ d2 ~ eb2 ~ gb2").s("sawtooth").lpf(sine.slow(4).range(400, 2600)).decay(.12).sustain(0).shape(.3).gain(${n2(g.acide)})
+const riserBruit = s("white*16").decay(.05).hpf(600).lpf(saw.slow(8).range(800, 10000)).gain(saw.slow(8).range(${n2(.05 * g.riser)}, ${n2(.5 * g.riser)}))
+const riserCaisse = s("sd*8").bank("RolandTR909").speed(1.04).lpf(saw.slow(8).range(500, 4000)).room(.4).gain(saw.slow(8).range(${n2(.1 * g.riser)}, ${n2(.6 * g.riser)}))
+const intro = stack(sub, hiss)
+const fondation = stack(sub, hiss, kickOmbre, drone)
+const corps = stack(kick, roll, hats)
+const riser1 = stack(kick, roll, hats, riserBruit)
+const pic1 = stack(kick, roll, hats, ohatPic, stab, rim)
+const casse = stack(drone, nappe, hiss)
+const riser2 = stack(kickOmbre, drone, nappe, riserBruit, riserCaisse)
+const pic2 = stack(kick, rollPic, hats, ohatPic, stab, rim, acide)
+const descente = stack(kick, roll, hats, ohat)
+const sortie = stack(sub, drone, hiss)
+arrange([16, intro], [16, fondation], [24, corps], [8, riser1], [32, pic1], [16, casse], [8, riser2], [40, pic2], [16, descente], [16, sortie])`;
+  if (state.master < 7900) code += `.lpf(${state.master})`;
+  return code;
+}
+
+function onChange() {
+  localStorage.setItem('technolab_console', JSON.stringify(state));
+  if (playing) { clearTimeout(timer); timer = setTimeout(() => evaluate(genCode()), 200); }
+}
+
+// --- Construction des tranches ---
+const zone = document.getElementById('console');
+STRIPS.forEach(sdef => {
+  const strip = document.createElement('div'); strip.className = 'strip';
+  const nom = document.createElement('div'); nom.className = 'nom'; nom.textContent = sdef.nom;
+  const out = document.createElement('output'); out.textContent = sdef.def;
+  const fader = document.createElement('input');
+  fader.type = 'range'; fader.className = 'fader';
+  fader.min = 0; fader.max = sdef.max; fader.step = .01; fader.value = sdef.def;
+  fader.oninput = () => { state.g[sdef.id] = parseFloat(fader.value); out.textContent = n2(state.g[sdef.id]); onChange(); };
+  const mute = document.createElement('button'); mute.className = 'mute'; mute.textContent = 'MUTE';
+  mute.onclick = () => { state.mute[sdef.id] = !state.mute[sdef.id]; mute.classList.toggle('actif', state.mute[sdef.id]); onChange(); };
+  strip.append(nom, out, fader, mute);
+  zone.appendChild(strip);
+});
+
+// --- Transport et master ---
+const playBtn = document.getElementById('playBtn');
+playBtn.onclick = () => {
+  if (!engineReady) return;
+  if (!playing) { playing = true; playBtn.textContent = '■ STOP'; playBtn.classList.add('playing'); evaluate(genCode()); }
+  else { playing = false; playBtn.innerHTML = '&#9654; PLAY'; playBtn.classList.remove('playing'); hush(); }
+};
+document.getElementById('bpm').oninput = e => { state.bpm = +e.target.value; document.getElementById('bpmOut').textContent = state.bpm; onChange(); };
+document.getElementById('master').oninput = e => { state.master = +e.target.value; document.getElementById('masterOut').textContent = state.master >= 7900 ? 'off' : state.master + ' Hz'; onChange(); };
+
+// --- Moteur ---
+async function loadBanks() {
+  const banks = ['Dirt-Samples.json', 'tidal-drum-machines.json'];
+  const mirrors = [
+    'https://cdn.jsdelivr.net/gh/felixroos/dough-samples@main/',
+    'https://raw.githubusercontent.com/felixroos/dough-samples/main/',
+  ];
+  for (const b of banks) {
+    let ok = false, err;
+    for (const m of mirrors) { try { await samples(m + b); ok = true; break; } catch (e) { err = e; } }
+    if (!ok) throw err;
+  }
+}
+initStrudel({ prebake: loadBanks }).then(() => {
+  engineReady = true;
+  document.getElementById('status').textContent = 'moteur prêt';
+}).catch(e => { document.getElementById('status').textContent = 'erreur moteur : ' + e.message; });
+</script>
+</body>
+</html>
