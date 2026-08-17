@@ -6,5 +6,9 @@
     "samples/loud_metal.wav",
     "samples/loud_creep.wav",
     "samples/loud_reverse.wav"
+  ],
+  "brother": [
+    "samples/brother.wav",
+    "samples/brother_derive.wav"
   ]
 }
