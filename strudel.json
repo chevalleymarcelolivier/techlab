@@ -1,4 +1,10 @@
 {
   "_base": "https://raw.githubusercontent.com/chevalleymarcelolivier/techlab/main/",
-  "vocal": ["samples/loudandlouder.wav"]
+  "vocal": [
+    "samples/loudandlouder.wav",
+    "samples/loud_demon.wav",
+    "samples/loud_metal.wav",
+    "samples/loud_creep.wav",
+    "samples/loud_reverse.wav"
+  ]
 }
